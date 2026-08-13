@@ -15,7 +15,7 @@
     {
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "{\n  \"folder_id\": \"1rVvt5geJZ6Udz4PdM45Di0pBhFyrTERA\",\n  \"id_tipo_documento_xml\": 21,\n  \"id_tipo_documento_pdf\": 22,\n  \"mapa_producto_por_proyecto\": {\n    \"bottura\": 7\n  },\n  \"hacer_publicos_los_archivos\": true,\n  \"proyecto_por_defecto\": \"bottura\"\n}",
+        "jsonOutput": "{\n  \"folder_id\": \"1rVvt5geJZ6Udz4PdM45Di0pBhFyrTERA\",\n  \"id_tipo_documento_xml\": 21,\n  \"id_tipo_documento_pdf\": 22,\n  \"mapa_producto_por_proyecto\": {\n    \"bottura\": 7\n  },\n  \"alias_modelo_a_proyecto\": {\n    \"gala\": \"bottura\",\n    \"modena\": \"bottura\"\n  },\n  \"proyecto_por_defecto\": \"bottura\",\n  \"url_xml_plantilla\": \"https://drive.google.com/file/d/{id}/preview\",\n  \"url_pdf_plantilla\": \"https://drive.google.com/file/d/{id}/preview\"\n}",
         "options": {}
       },
       "id": "3cebf6cf-aec7-4681-8ba8-89529c820ca5",
