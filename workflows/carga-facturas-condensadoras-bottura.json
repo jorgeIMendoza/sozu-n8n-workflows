@@ -15,7 +15,7 @@
     {
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "{\n  \"folder_id\": \"1rVvt5geJZ6Udz4PdM45Di0pBhFyrTERA\",\n  \"id_tipo_documento_xml\": 21,\n  \"id_tipo_documento_pdf\": 22,\n  \"mapa_producto_por_proyecto\": {\n    \"bottura\": 7\n  },\n  \"alias_modelo_a_proyecto\": {\n    \"gala\": \"bottura\",\n    \"modena\": \"bottura\"\n  },\n  \"url_xml_plantilla\": \"https://drive.google.com/file/d/{id}/view\",\n  \"url_pdf_plantilla\": \"https://drive.google.com/file/d/{id}/view\"\n}",
+        "jsonOutput": "{\n  \"folder_id\": \"1rVvt5geJZ6Udz4PdM45Di0pBhFyrTERA\",\n  \"id_tipo_documento_xml\": 21,\n  \"id_tipo_documento_pdf\": 22,\n  \"mapa_producto_por_proyecto\": {\n    \"bottura\": 7\n  },\n  \"alias_modelo_a_proyecto\": {\n    \"gala\": \"bottura\",\n    \"modena\": \"bottura\"\n  },\n  \"url_xml_plantilla\": \"https://drive.google.com/file/d/{id}/preview\",\n  \"url_pdf_plantilla\": \"https://drive.google.com/file/d/{id}/preview\"\n}",
         "options": {}
       },
       "id": "a1000000-0000-4000-8000-000000000002",
@@ -374,7 +374,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// URL pública del archivo en Drive: visor de Drive para XML y PDF.\n// Se usa /file/d/{id}/view (no uc?export=download) porque para los XML Drive\n// devuelve la pantalla \"no puede analizar este archivo en busca de virus\";\n// el visor, en cambio, abre siempre y ofrece el botón de descarga.\nconst ctx = $('Hay que subir').item.json;\nconst cfg = $('Configuración').first().json;\nconst permiso = $input.item.json || {};\nconst compartido = !!permiso.id && !permiso.error;\n\nconst plantilla = (ctx.tipo === 'xml' ? cfg.url_xml_plantilla : cfg.url_pdf_plantilla)\n  || 'https://drive.google.com/file/d/{id}/view';\nconst url = String(plantilla).split('{id}').join(ctx.file_id);\n\nreturn { json: { ...ctx, url_publica: url, permiso_publico_ok: compartido } };"
+        "jsCode": "// URL pública del archivo en Drive: visor embebible (/preview) para XML y PDF.\n// Se usa /file/d/{id}/preview y no /view ni uc?export=download: /view responde con\n// X-Frame-Options: SAMEORIGIN y el admin muestra los documentos dentro de un iframe\n// (DocumentosCuentaSimple.tsx), donde Drive responde \"Necesitas acceso\".\nconst ctx = $('Hay que subir').item.json;\nconst cfg = $('Configuración').first().json;\nconst permiso = $input.item.json || {};\nconst compartido = !!permiso.id && !permiso.error;\n\nconst plantilla = (ctx.tipo === 'xml' ? cfg.url_xml_plantilla : cfg.url_pdf_plantilla)\n  || 'https://drive.google.com/file/d/{id}/preview';\nconst url = String(plantilla).split('{id}').join(ctx.file_id);\n\nreturn { json: { ...ctx, url_publica: url, permiso_publico_ok: compartido } };"
       },
       "id": "a1000000-0000-4000-8000-000000000013",
       "name": "Construir URL pública",
