@@ -7,7 +7,10 @@
       "name": "Inicio",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [-380, 300]
+      "position": [
+        -380,
+        300
+      ]
     },
     {
       "parameters": {
@@ -19,7 +22,10 @@
       "name": "Configuración",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [-180, 300]
+      "position": [
+        -180,
+        300
+      ]
     },
     {
       "parameters": {
@@ -57,7 +63,10 @@
       "name": "Listar archivos del Drive",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [20, 300],
+      "position": [
+        20,
+        300
+      ],
       "retryOnFail": true,
       "maxTries": 3
     },
@@ -70,7 +79,10 @@
       "name": "Emparejar por folio",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 300]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -101,7 +113,10 @@
       "name": "Solo folios con XML",
       "type": "n8n-nodes-base.filter",
       "typeVersion": 2,
-      "position": [420, 300]
+      "position": [
+        420,
+        300
+      ]
     },
     {
       "parameters": {
@@ -134,7 +149,10 @@
       "name": "Descargar XML",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [620, 300],
+      "position": [
+        620,
+        300
+      ],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 2000
@@ -148,18 +166,24 @@
       "name": "XML a JSON",
       "type": "n8n-nodes-base.xml",
       "typeVersion": 1,
-      "position": [820, 300]
+      "position": [
+        820,
+        300
+      ]
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// Busca en TODO el XML del CFDI la descripción del concepto y extrae proyecto + depa.\n// Ej: \"40101700 - Condensadora departamento 1307 bottura\" -> depa 1307, proyecto bottura.\nconst ctx = $('Solo folios con XML').item.json;\nconst cfg = $('Configuración').first().json;\nconst xml = $input.item.json;\n\nconst textos = [];\n(function walk(n) {\n  if (n === null || n === undefined) return;\n  if (typeof n === 'string') { textos.push(n); return; }\n  if (Array.isArray(n)) { n.forEach(walk); return; }\n  if (typeof n === 'object') { Object.values(n).forEach(walk); }\n})(xml);\n\nconst reDesc = /condensadora\\s+(?:de[l]?\\s+)?(?:departamento|depto\\.?|dpto\\.?|depa)\\s+([A-Za-z0-9\\-\\/]+)\\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+)/i;\nlet m = null;\nlet descripcion = null;\nfor (const t of textos) {\n  const r = t.match(reDesc);\n  if (r) { m = r; descripcion = t.trim(); break; }\n}\n\n// Folio fiscal / folio del comprobante para el log (si aparece en el XML).\nlet uuid = null;\nfor (const t of textos) {\n  const r = t.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  if (r) { uuid = r[0].toUpperCase(); break; }\n}\n\nconst num_depa = m ? m[1].trim() : null;\nconst proyecto = m ? m[2].trim().toLowerCase() : null;\nconst mapa = cfg.mapa_producto_por_proyecto || {};\nconst id_producto = proyecto && mapa[proyecto] !== undefined ? mapa[proyecto] : null;\n\nreturn {\n  json: {\n    ...ctx,\n    descripcion,\n    uuid,\n    num_depa,\n    proyecto,\n    id_producto,\n    // Valores neutros para que la consulta SQL nunca reciba null.\n    q_num_depa: num_depa || '',\n    q_id_producto: id_producto === null ? 0 : id_producto,\n    error_parseo: m ? null : (id_producto === null && proyecto ? null : 'no_se_pudo_parsear_descripcion'),\n    error_proyecto: proyecto && id_producto === null ? 'proyecto_sin_id_producto_mapeado' : null\n  }\n};"
+        "jsCode": "// Busca en TODO el XML del CFDI la descripción del concepto y extrae proyecto + depa.\n// Formatos reales vistos:\n//   \"40101700 - Condensadora departamento 1307 bottura\"\n//   \"Primer pago condensadora departamento Gala 913 Bottura\"   <- trae el modelo antes del número\n// Estrategia: cortar desde la palabra \"condensadora\", tokenizar la cola, y de ahí sacar\n// el proyecto (token que exista en el mapa de configuración, o el último token alfabético)\n// y el número de departamento (último token con dígitos a la izquierda del proyecto).\nconst ctx = $('Solo folios con XML').item.json;\nconst cfg = $('Configuración').first().json;\nconst xml = $input.item.json;\n\nconst mapa = cfg.mapa_producto_por_proyecto || {};\nconst norm = (s) => String(s).normalize('NFD').replace(new RegExp('\\\\p{M}', 'gu'), '').toLowerCase();\nconst proyectosConocidos = Object.keys(mapa).map(norm);\n\nconst textos = [];\n(function walk(n) {\n  if (n === null || n === undefined) return;\n  if (typeof n === 'string') { textos.push(n); return; }\n  if (typeof n === 'number' || typeof n === 'boolean') return;\n  if (Array.isArray(n)) { n.forEach(walk); return; }\n  if (typeof n === 'object') { Object.values(n).forEach(walk); }\n})(xml);\n\nfunction parsear(desc) {\n  const n = norm(desc);\n  const pos = n.indexOf('condensadora');\n  let cola = pos >= 0 ? n.slice(pos + 'condensadora'.length) : n;\n  // Quita \"departamento\" / \"depto\" / \"depa\" y sus preposiciones, si aparecen.\n  cola = cola.replace(/^[\\s\\-–:,]*(?:de\\s+la\\s+|de\\s+el\\s+|del\\s+|de\\s+)?(?:departamentos?|deptos?\\.?|dptos?\\.?|depas?|deps?\\.?)\\b/, ' ');\n  const tokens = cola.split(/[\\s,;:.\\-–_/()]+/).filter(Boolean);\n\n  // Proyecto: token conocido del mapa (buscando desde el final). Si no, último token alfabético.\n  let proyecto = null;\n  let idxProy = -1;\n  for (let i = tokens.length - 1; i >= 0; i--) {\n    if (proyectosConocidos.includes(tokens[i])) { proyecto = tokens[i]; idxProy = i; break; }\n  }\n  if (!proyecto) {\n    for (let i = tokens.length - 1; i >= 0; i--) {\n      if (/^[a-z]{3,}$/.test(tokens[i])) { proyecto = tokens[i]; idxProy = i; break; }\n    }\n  }\n\n  // Número de departamento: token con dígitos más a la derecha, antes del proyecto.\n  const rango = idxProy >= 0 ? tokens.slice(0, idxProy) : tokens;\n  let num = null;\n  for (let i = rango.length - 1; i >= 0; i--) {\n    if (/\\d/.test(rango[i])) { num = rango[i]; break; }\n  }\n  if (!num) {\n    for (let i = tokens.length - 1; i >= 0; i--) {\n      if (/\\d/.test(tokens[i]) && i !== idxProy) { num = tokens[i]; break; }\n    }\n  }\n  if (num) num = num.replace(/^#+/, '').toUpperCase();\n\n  return { proyecto, num_depa: num, tokens };\n}\n\n// Candidatas: cualquier texto que hable de condensadora (o, en su defecto, de departamento).\nconst candidatas = textos.filter((t) => /condensadora/i.test(norm(t)));\nconst respaldo = candidatas.length ? candidatas : textos.filter((t) => /departamento|depto|depa\\b/i.test(norm(t)));\n\nlet elegida = null;\nlet parseo = { proyecto: null, num_depa: null };\n// Prefiere la descripción cuyo proyecto esté en el mapa y que traiga número.\nfor (const t of respaldo) {\n  const p = parsear(t);\n  const buena = p.num_depa && p.proyecto && proyectosConocidos.includes(p.proyecto);\n  if (buena) { elegida = t; parseo = p; break; }\n  if (!elegida && (p.num_depa || p.proyecto)) { elegida = t; parseo = p; }\n}\n\n// Folio fiscal (UUID) para el log.\nlet uuid = null;\nfor (const t of textos) {\n  const r = String(t).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  if (r) { uuid = r[0].toUpperCase(); break; }\n}\n\nconst num_depa = parseo.num_depa || null;\nconst proyecto = parseo.proyecto || null;\nconst id_producto = proyecto && mapa[proyecto] !== undefined ? mapa[proyecto] : null;\n\nreturn {\n  json: {\n    ...ctx,\n    descripcion: elegida ? String(elegida).trim() : null,\n    descripciones_candidatas: respaldo.slice(0, 5).map((t) => String(t).trim()),\n    uuid,\n    num_depa,\n    proyecto,\n    id_producto,\n    // Valores neutros para que la consulta SQL nunca reciba null.\n    q_num_depa: num_depa || '',\n    q_id_producto: id_producto === null ? 0 : id_producto,\n    error_parseo: num_depa && proyecto ? null : 'no_se_pudo_parsear_descripcion',\n    error_proyecto: proyecto && id_producto === null ? 'proyecto_sin_id_producto_mapeado' : null\n  }\n};"
       },
       "id": "a1000000-0000-4000-8000-000000000008",
       "name": "Extraer proyecto y depa",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1020, 300]
+      "position": [
+        1020,
+        300
+      ]
     },
     {
       "parameters": {
@@ -173,7 +197,10 @@
       "name": "Resolver cuenta y documentos",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [1220, 300],
+      "position": [
+        1220,
+        300
+      ],
       "alwaysOutputData": true,
       "retryOnFail": true,
       "maxTries": 3
@@ -187,7 +214,10 @@
       "name": "Planear cargas",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1420, 300]
+      "position": [
+        1420,
+        300
+      ]
     },
     {
       "parameters": {
@@ -217,7 +247,10 @@
       "name": "Hay que subir",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1620, 300]
+      "position": [
+        1620,
+        300
+      ]
     },
     {
       "parameters": {
@@ -243,7 +276,10 @@
       "name": "Hacer público en Drive",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1840, 200],
+      "position": [
+        1840,
+        200
+      ],
       "onError": "continueRegularOutput",
       "retryOnFail": true,
       "maxTries": 2
@@ -257,7 +293,10 @@
       "name": "Construir URL pública",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2040, 200]
+      "position": [
+        2040,
+        200
+      ]
     },
     {
       "parameters": {
@@ -271,7 +310,10 @@
       "name": "Insertar documento",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [2240, 200],
+      "position": [
+        2240,
+        200
+      ],
       "onError": "continueRegularOutput",
       "retryOnFail": true,
       "maxTries": 2
@@ -282,7 +324,10 @@
       "name": "Sin cambios",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [2040, 420]
+      "position": [
+        2040,
+        420
+      ]
     },
     {
       "parameters": {
@@ -293,7 +338,10 @@
       "name": "Armar log",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2460, 300]
+      "position": [
+        2460,
+        300
+      ]
     },
     {
       "parameters": {
@@ -307,7 +355,10 @@
       "name": "Log a archivo txt",
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
-      "position": [2660, 300]
+      "position": [
+        2660,
+        300
+      ]
     },
     {
       "parameters": {
@@ -328,64 +379,207 @@
       "name": "Subir log a Drive",
       "type": "n8n-nodes-base.googleDrive",
       "typeVersion": 3,
-      "position": [2860, 300],
+      "position": [
+        2860,
+        300
+      ],
       "onError": "continueRegularOutput"
     }
   ],
   "connections": {
     "Inicio": {
-      "main": [[{ "node": "Configuración", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Configuración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Configuración": {
-      "main": [[{ "node": "Listar archivos del Drive", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Listar archivos del Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Listar archivos del Drive": {
-      "main": [[{ "node": "Emparejar por folio", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Emparejar por folio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Emparejar por folio": {
-      "main": [[{ "node": "Solo folios con XML", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Solo folios con XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Solo folios con XML": {
-      "main": [[{ "node": "Descargar XML", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Descargar XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Descargar XML": {
-      "main": [[{ "node": "XML a JSON", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "XML a JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "XML a JSON": {
-      "main": [[{ "node": "Extraer proyecto y depa", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Extraer proyecto y depa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Extraer proyecto y depa": {
-      "main": [[{ "node": "Resolver cuenta y documentos", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Resolver cuenta y documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Resolver cuenta y documentos": {
-      "main": [[{ "node": "Planear cargas", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Planear cargas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Planear cargas": {
-      "main": [[{ "node": "Hay que subir", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Hay que subir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Hay que subir": {
       "main": [
-        [{ "node": "Hacer público en Drive", "type": "main", "index": 0 }],
-        [{ "node": "Sin cambios", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Hacer público en Drive",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sin cambios",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Hacer público en Drive": {
-      "main": [[{ "node": "Construir URL pública", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Construir URL pública",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Construir URL pública": {
-      "main": [[{ "node": "Insertar documento", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Insertar documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Insertar documento": {
-      "main": [[{ "node": "Armar log", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Armar log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Sin cambios": {
-      "main": [[{ "node": "Armar log", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Armar log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Armar log": {
-      "main": [[{ "node": "Log a archivo txt", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Log a archivo txt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Log a archivo txt": {
-      "main": [[{ "node": "Subir log a Drive", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Subir log a Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
