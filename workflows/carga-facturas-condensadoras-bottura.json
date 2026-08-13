@@ -15,7 +15,7 @@
     {
       "parameters": {
         "mode": "raw",
-        "jsonOutput": "{\n  \"folder_id\": \"1rVvt5geJZ6Udz4PdM45Di0pBhFyrTERA\",\n  \"id_tipo_documento_xml\": 21,\n  \"id_tipo_documento_pdf\": 22,\n  \"mapa_producto_por_proyecto\": {\n    \"bottura\": 7\n  },\n  \"alias_modelo_a_proyecto\": {\n    \"gala\": \"bottura\",\n    \"modena\": \"bottura\"\n  },\n  \"hacer_publicos_los_archivos\": true\n}",
+        "jsonOutput": "{\n  \"folder_id\": \"1rVvt5geJZ6Udz4PdM45Di0pBhFyrTERA\",\n  \"id_tipo_documento_xml\": 21,\n  \"id_tipo_documento_pdf\": 22,\n  \"mapa_producto_por_proyecto\": {\n    \"bottura\": 7\n  },\n  \"alias_modelo_a_proyecto\": {\n    \"gala\": \"bottura\",\n    \"modena\": \"bottura\"\n  },\n  \"hacer_publicos_los_archivos\": true,\n  \"url_xml_plantilla\": \"https://drive.usercontent.google.com/download?id={id}&export=download&confirm=t\",\n  \"url_pdf_plantilla\": \"https://drive.google.com/file/d/{id}/view\"\n}",
         "options": {}
       },
       "id": "a1000000-0000-4000-8000-000000000002",
@@ -287,7 +287,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// Construye la URL pública del archivo de Drive.\n// XML -> descarga directa (la app necesita el contenido). PDF -> visor de Drive.\nconst ctx = $('Hay que subir').item.json;\nconst permiso = $input.item.json || {};\nconst compartido = !!permiso.id && !permiso.error;\n\nconst url = ctx.tipo === 'xml'\n  ? 'https://drive.google.com/uc?export=download&id=' + ctx.file_id\n  : 'https://drive.google.com/file/d/' + ctx.file_id + '/view';\n\nreturn { json: { ...ctx, url_publica: url, permiso_publico_ok: compartido } };"
+        "jsCode": "// Construye la URL pública del archivo de Drive.\n// XML -> descarga directa. Se usa drive.usercontent.google.com con confirm=t porque\n// drive.google.com/uc?export=download devuelve la pantalla \"Google Drive no puede\n// analizar este archivo en busca de virus\" en lugar del contenido.\n// PDF -> visor de Drive.\nconst ctx = $('Hay que subir').item.json;\nconst cfg = $('Configuración').first().json;\nconst permiso = $input.item.json || {};\nconst compartido = !!permiso.id && !permiso.error;\n\nconst plantillaXml = cfg.url_xml_plantilla || 'https://drive.usercontent.google.com/download?id={id}&export=download&confirm=t';\nconst plantillaPdf = cfg.url_pdf_plantilla || 'https://drive.google.com/file/d/{id}/view';\nconst plantilla = ctx.tipo === 'xml' ? plantillaXml : plantillaPdf;\nconst url = String(plantilla).split('{id}').join(ctx.file_id);\n\nreturn { json: { ...ctx, url_publica: url, permiso_publico_ok: compartido } };"
       },
       "id": "a1000000-0000-4000-8000-000000000013",
       "name": "Construir URL pública",
