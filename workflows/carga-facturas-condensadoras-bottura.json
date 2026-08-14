@@ -1,0 +1,655 @@
+{
+  "name": "Carga facturas condensadoras (Drive -> documentos)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "eea0f57f-9e26-4245-b01b-19f7a5fa95a0",
+      "name": "Inicio",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"folder_id\": \"1rVvt5geJZ6Udz4PdM45Di0pBhFyrTERA\",\n  \"id_tipo_documento_xml\": 21,\n  \"id_tipo_documento_pdf\": 22,\n  \"mapa_producto_por_proyecto\": {\n    \"bottura\": 7\n  },\n  \"alias_modelo_a_proyecto\": {\n    \"gala\": \"bottura\",\n    \"modena\": \"bottura\"\n  },\n  \"proyecto_por_defecto\": \"bottura\",\n  \"url_xml_plantilla\": \"https://drive.google.com/file/d/{id}/preview\",\n  \"url_pdf_plantilla\": \"https://drive.google.com/file/d/{id}/preview\"\n}",
+        "options": {}
+      },
+      "id": "3cebf6cf-aec7-4681-8ba8-89529c820ca5",
+      "name": "Configuración",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2016,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ \"'\" + $json.folder_id + \"' in parents and trashed = false\" }}"
+            },
+            {
+              "name": "pageSize",
+              "value": "1000"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,mimeType,size),nextPageToken"
+            },
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "includeItemsFromAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "430d969e-0a2f-4b6d-aaab-29204f3ac3c0",
+      "name": "Listar archivos del Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1824,
+        112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "WCyZL0GGmQRfvzrB",
+          "name": "Google Drive account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agrupa los 170 archivos del Drive en pares (xml + pdf) por folio.\n// Clave primaria: nombre sin extensión. Fallback: última secuencia numérica del nombre.\nconst files = ($input.first().json.files) || [];\nconst clean = (s) => (s === null || s === undefined ? '' : String(s)).trim();\nconst stripExt = (s) => clean(s).replace(/\\.[^.]+$/, '');\nconst keyOf = (s) => stripExt(s).toLowerCase().replace(/[\\s_]+/g, ' ').trim();\nconst numKey = (s) => {\n  const m = stripExt(s).match(/[A-Za-z]*\\d{2,}/g);\n  return m ? m[m.length - 1].toLowerCase() : null;\n};\n\nconst grupos = new Map();\nconst push = (key, f, ext) => {\n  if (!grupos.has(key)) {\n    grupos.set(key, { folio: key, xml_file_id: null, xml_name: null, pdf_file_id: null, pdf_name: null });\n  }\n  const g = grupos.get(key);\n  if (ext === 'xml') { g.xml_file_id = f.id; g.xml_name = clean(f.name); }\n  else { g.pdf_file_id = f.id; g.pdf_name = clean(f.name); }\n};\n\nconst archivos = files\n  .map((f) => ({ f, ext: (clean(f.name).split('.').pop() || '').toLowerCase() }))\n  .filter((x) => x.ext === 'xml' || x.ext === 'pdf');\n\nfor (const { f, ext } of archivos) push(keyOf(f.name), f, ext);\n\n// Segunda pasada: reintenta emparejar huérfanos cuyo pdf y xml se llaman distinto.\nconst huerfanos = [...grupos.values()].filter((g) => !g.xml_file_id || !g.pdf_file_id);\nif (huerfanos.length > 1) {\n  const porNum = new Map();\n  for (const g of huerfanos) {\n    const n = numKey(g.xml_name || g.pdf_name || g.folio);\n    if (!n) continue;\n    if (!porNum.has(n)) porNum.set(n, []);\n    porNum.get(n).push(g);\n  }\n  for (const [, lista] of porNum) {\n    if (lista.length < 2) continue;\n    const conXml = lista.find((g) => g.xml_file_id);\n    const conPdf = lista.find((g) => g.pdf_file_id && !g.xml_file_id);\n    if (!conXml || !conPdf || conXml === conPdf) continue;\n    conXml.pdf_file_id = conPdf.pdf_file_id;\n    conXml.pdf_name = conPdf.pdf_name;\n    grupos.delete(conPdf.folio);\n  }\n}\n\nreturn [...grupos.values()].map((g) => ({ json: g }));"
+      },
+      "id": "18bcfece-38c8-47e4-950e-c33e4ec88f03",
+      "name": "Emparejar por folio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1616,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f0000000-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.xml_file_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "32fd0cff-9006-4cdb-abdc-e30d2eb460bb",
+      "name": "Solo folios con XML",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        -1424,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $json.xml_file_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "alt",
+              "value": "media"
+            },
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "xml_raw"
+            }
+          }
+        }
+      },
+      "id": "893dc12e-c866-46e6-820c-e59f8ff2f6c8",
+      "name": "Descargar XML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1216,
+        112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "WCyZL0GGmQRfvzrB",
+          "name": "Google Drive account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataPropertyName": "xml_raw",
+        "options": {}
+      },
+      "id": "97b4d6d4-1a12-465c-a239-55a14b463fd6",
+      "name": "XML a JSON",
+      "type": "n8n-nodes-base.xml",
+      "typeVersion": 1,
+      "position": [
+        -1024,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Busca en TODO el XML del CFDI la descripción del concepto y extrae proyecto + depa.\n// Formatos reales vistos:\n//   \"40101700 - Condensadora departamento 1307 bottura\"\n//   \"Primer pago condensadora departamento Gala 913 Bottura\"  <- modelo antes del número\n//   \"Primer pago condensadora departamento Modena 913\"        <- solo el modelo, sin proyecto\n// El proyecto se resuelve por nombre (mapa_producto_por_proyecto) o por el modelo\n// (alias_modelo_a_proyecto: gala/modena -> bottura).\nconst ctx = $('Solo folios con XML').item.json;\nconst cfg = $('Configuración').first().json;\nconst xml = $input.item.json;\n\nconst norm = (s) => String(s).normalize('NFD').replace(new RegExp('\\\\p{M}', 'gu'), '').toLowerCase();\n\nconst mapa = cfg.mapa_producto_por_proyecto || {};\nconst proyectosConocidos = Object.keys(mapa).map(norm);\n\n// Modelos que identifican un proyecto (ej. Gala y Modena son modelos de Bottura).\nconst ALIAS_POR_DEFECTO = { gala: 'bottura', modena: 'bottura' };\nconst aliasCfg = Object.assign({}, ALIAS_POR_DEFECTO, cfg.alias_modelo_a_proyecto || {});\nconst alias = {};\nfor (const [modelo, proy] of Object.entries(aliasCfg)) alias[norm(modelo)] = norm(proy);\n\nconst textos = [];\n(function walk(n) {\n  if (n === null || n === undefined) return;\n  if (typeof n === 'string') { textos.push(n); return; }\n  if (typeof n === 'number' || typeof n === 'boolean') return;\n  if (Array.isArray(n)) { n.forEach(walk); return; }\n  if (typeof n === 'object') { Object.values(n).forEach(walk); }\n})(xml);\n\n// Busca un atributo del CFDI por nombre. Recorre por niveles (BFS) para quedarse con\n// el del Comprobante y no con los de conceptos/impuestos, que estan mas anidados.\nfunction atributo(nombres) {\n  const buscados = nombres.map((n) => n.toLowerCase());\n  let nivel = [xml];\n  for (let prof = 0; prof < 8 && nivel.length; prof++) {\n    const siguiente = [];\n    for (const nodo of nivel) {\n      if (!nodo || typeof nodo !== 'object') continue;\n      for (const [k, v] of Object.entries(nodo)) {\n        if (buscados.includes(String(k).toLowerCase()) && (typeof v === 'string' || typeof v === 'number')) {\n          return String(v);\n        }\n      }\n      for (const v of Object.values(nodo)) {\n        if (v && typeof v === 'object') siguiente.push(v);\n      }\n    }\n    nivel = siguiente;\n  }\n  return null;\n}\n\nfunction parsear(desc) {\n  const n = norm(desc);\n  const pos = n.indexOf('condensadora');\n  let cola = pos >= 0 ? n.slice(pos + 'condensadora'.length) : n;\n  // Quita \"departamento\" / \"depto\" / \"depa\" y sus preposiciones, si aparecen.\n  cola = cola.replace(/^[\\s\\-–:,]*(?:de\\s+la\\s+|de\\s+el\\s+|del\\s+|de\\s+)?(?:departamentos?|deptos?\\.?|dptos?\\.?|depas?|deps?\\.?)\\b/, ' ');\n  const tokens = cola.split(/[\\s,;:.\\-–_/()]+/).filter(Boolean);\n  const conDigitos = (t) => /\\d/.test(t);\n\n  // 1) Proyecto por nombre explícito (bottura, ...), buscando desde el final.\n  let proyecto = null;\n  let idxProy = -1;\n  for (let i = tokens.length - 1; i >= 0; i--) {\n    if (proyectosConocidos.includes(tokens[i])) { proyecto = tokens[i]; idxProy = i; break; }\n  }\n\n  // 2) Modelo conocido (gala, modena, ...) -> proyecto. Sirve tanto para resolver el\n  //    proyecto cuando no viene escrito, como para ubicar el número que va después.\n  let idxModelo = -1;\n  for (let i = 0; i < tokens.length; i++) {\n    if (alias[tokens[i]] !== undefined) { idxModelo = i; if (!proyecto) proyecto = alias[tokens[i]]; break; }\n  }\n\n  // 3) Ultimo recurso: el ultimo token alfabetico. Solo si no hay proyecto_por_defecto,\n  //    porque descripciones como \"Condensadora cliente 1307\" no traen proyecto y la\n  //    palabra suelta (cliente, socio, etc.) no es un proyecto real.\n  if (!proyecto && !cfg.proyecto_por_defecto) {\n    for (let i = tokens.length - 1; i >= 0; i--) {\n      if (/^[a-z]{3,}$/.test(tokens[i])) { proyecto = tokens[i]; idxProy = i; break; }\n    }\n  }\n\n  // Número de departamento:\n  //   a) si hay modelo, el primer token con dígitos después del modelo (\"gala 913\");\n  //   b) si no, el último token con dígitos antes del nombre del proyecto (\"1307 bottura\");\n  //   c) si no, el primero con dígitos.\n  let num = null;\n  if (idxModelo >= 0) {\n    for (let i = idxModelo + 1; i < tokens.length; i++) {\n      if (conDigitos(tokens[i]) && i !== idxProy) { num = tokens[i]; break; }\n    }\n  }\n  if (!num && idxProy >= 0) {\n    for (let i = idxProy - 1; i >= 0; i--) {\n      if (conDigitos(tokens[i])) { num = tokens[i]; break; }\n    }\n  }\n  if (!num) {\n    for (let i = 0; i < tokens.length; i++) {\n      if (conDigitos(tokens[i]) && i !== idxProy) { num = tokens[i]; break; }\n    }\n  }\n  if (num) num = num.replace(/^#+/, '').toUpperCase();\n\n  // Si lo que quedó como proyecto es en realidad un modelo (Modena, Gala...), se traduce.\n  let inferido = false;\n  let modelo = idxModelo >= 0 ? tokens[idxModelo] : null;\n  if (proyecto && alias[proyecto] !== undefined) { modelo = modelo || proyecto; proyecto = alias[proyecto]; inferido = true; }\n  if (idxModelo >= 0 && alias[tokens[idxModelo]] === proyecto) inferido = true;\n  return { proyecto, num_depa: num, modelo, inferido };\n}\n\n// Candidatas: cualquier texto que hable de condensadora (o, en su defecto, de departamento).\nconst candidatas = textos.filter((t) => /condensadora/i.test(norm(t)));\nconst respaldo = candidatas.length ? candidatas : textos.filter((t) => /departamento|depto|depa\\b/i.test(norm(t)));\n\nlet elegida = null;\nlet parseo = { proyecto: null, num_depa: null, modelo: null, inferido: false };\n// Prefiere la descripción cuyo proyecto sea conocido y que traiga número.\nfor (const t of respaldo) {\n  const p = parsear(t);\n  const buena = p.num_depa && p.proyecto && proyectosConocidos.includes(p.proyecto);\n  if (buena) { elegida = t; parseo = p; break; }\n  if (!elegida && (p.num_depa || p.proyecto)) { elegida = t; parseo = p; }\n}\n\n// Folio fiscal (UUID) para el log.\nlet uuid = null;\nfor (const t of textos) {\n  const r = String(t).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  if (r) { uuid = r[0].toUpperCase(); break; }\n}\n\n// Importe facturado, para poder sumar en reportes posteriores.\nconst aNumero = (v) => {\n  if (v === null || v === undefined) return null;\n  const n = Number(String(v).replace(/[^0-9.-]/g, ''));\n  return Number.isFinite(n) ? n : null;\n};\nconst total = aNumero(atributo(['Total']));\nconst subtotal = aNumero(atributo(['SubTotal']));\nconst moneda = atributo(['Moneda']);\nconst serie = atributo(['Serie']);\nconst folio_cfdi = atributo(['Folio']);\nconst fecha_cfdi = atributo(['Fecha']);\n\nconst num_depa = parseo.num_depa || null;\nlet proyecto = parseo.proyecto || null;\n\n// Todas las facturas de este lote son de Bottura: si la descripcion no permite\n// deducir el proyecto, se usa proyecto_por_defecto y se deja marcado en el log.\nlet porDefecto = false;\nconst defecto = cfg.proyecto_por_defecto ? norm(cfg.proyecto_por_defecto) : null;\nif (!proyecto && defecto) { proyecto = defecto; porDefecto = true; }\n\nconst id_producto = proyecto && mapa[proyecto] !== undefined ? mapa[proyecto] : null;\n\nlet errorProyecto = null;\nif (proyecto && id_producto === null) errorProyecto = 'proyecto_sin_id_producto_mapeado';\nelse if (porDefecto) errorProyecto = 'proyecto_por_defecto';\nelse if (parseo.inferido) errorProyecto = 'proyecto_inferido_por_modelo';\n\nreturn {\n  json: {\n    ...ctx,\n    descripcion: elegida ? String(elegida).trim() : null,\n    descripciones_candidatas: respaldo.slice(0, 5).map((t) => String(t).trim()),\n    uuid,\n    total,\n    subtotal,\n    moneda,\n    serie,\n    folio_cfdi,\n    fecha_cfdi,\n    modelo: parseo.modelo || null,\n    proyecto_inferido_por_modelo: parseo.inferido === true,\n    proyecto_por_defecto_aplicado: porDefecto,\n    num_depa,\n    proyecto,\n    id_producto,\n    // Valores neutros para que la consulta SQL nunca reciba null.\n    q_num_depa: num_depa || '',\n    q_id_producto: id_producto === null ? 0 : id_producto,\n    error_parseo: num_depa && proyecto ? null : 'no_se_pudo_parsear_descripcion',\n    error_proyecto: errorProyecto\n  }\n};"
+      },
+      "id": "cb66297f-9148-42b8-8938-9547a83b1d87",
+      "name": "Extraer proyecto y depa",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Resuelve la cuenta de cobranza de la condensadora y si ESTA factura ya esta cargada.\n-- Relación: cuentas_cobranza -> ofertas (id_producto = condensadora del proyecto) -> propiedades (numero_propiedad).\n--\n-- Una cuenta puede tener varias facturas (pagos parciales), asi que no basta con ver\n-- si existe algun documento tipo 21/22: se busca el id del archivo de Drive dentro de\n-- documentos.url, para cargar cada factura una sola vez sin bloquear a las demas.\n--\n-- Incluye cuentas CANCELADAS (activo = false): se prefiere la activa y, si no hay,\n-- se devuelve la cancelada marcando cuenta_activa = false para que quede en el log.\n-- Siempre devuelve exactamente 1 fila por item, aunque no haya coincidencia.\nSELECT\n  s.num_depa,\n  s.id_producto,\n  m.id_cuenta_cobranza,\n  m.id_propiedad,\n  m.numero_propiedad,\n  COALESCE(m.cuenta_activa, false) AS cuenta_activa,\n  COALESCE(cnt.n_activas, 0) AS n_activas,\n  COALESCE(cnt.n_total, 0)   AS n_total,\n  COALESCE((SELECT true FROM public.documentos d\n             WHERE d.id_cuenta_cobranza = m.id_cuenta_cobranza\n               AND d.id_tipo_documento = 21\n               AND d.activo\n               AND s.xml_file_id <> ''\n               AND position(s.xml_file_id IN d.url) > 0\n             LIMIT 1), false) AS tiene_xml,\n  COALESCE((SELECT true FROM public.documentos d\n             WHERE d.id_cuenta_cobranza = m.id_cuenta_cobranza\n               AND d.id_tipo_documento = 22\n               AND d.activo\n               AND s.pdf_file_id <> ''\n               AND position(s.pdf_file_id IN d.url) > 0\n             LIMIT 1), false) AS tiene_pdf,\n  COALESCE((SELECT count(*)::int FROM public.documentos d\n             WHERE d.id_cuenta_cobranza = m.id_cuenta_cobranza\n               AND d.id_tipo_documento IN (21, 22)\n               AND d.activo), 0) AS docs_en_cuenta\nFROM (SELECT btrim($1::text) AS num_depa,\n             $2::int         AS id_producto,\n             btrim($3::text) AS xml_file_id,\n             btrim($4::text) AS pdf_file_id) s\nLEFT JOIN LATERAL (\n  SELECT cc.id AS id_cuenta_cobranza, p.id AS id_propiedad, p.numero_propiedad, cc.activo AS cuenta_activa\n  FROM public.cuentas_cobranza cc\n  JOIN public.ofertas o     ON o.id = cc.id_oferta\n  JOIN public.propiedades p ON p.id = o.id_propiedad\n  WHERE o.id_producto = s.id_producto\n    AND btrim(p.numero_propiedad) = s.num_depa\n  ORDER BY cc.activo DESC, o.activo DESC, cc.id DESC\n  LIMIT 1\n) m ON TRUE\nLEFT JOIN LATERAL (\n  SELECT count(*) FILTER (WHERE cc.activo)::int AS n_activas,\n         count(*)::int                          AS n_total\n  FROM public.cuentas_cobranza cc\n  JOIN public.ofertas o     ON o.id = cc.id_oferta\n  JOIN public.propiedades p ON p.id = o.id_propiedad\n  WHERE o.id_producto = s.id_producto\n    AND btrim(p.numero_propiedad) = s.num_depa\n) cnt ON TRUE;",
+        "options": {
+          "queryReplacement": "={{ $json.q_num_depa }},{{ $json.q_id_producto }},{{ $json.xml_file_id || '' }},{{ $json.pdf_file_id || '' }}"
+        }
+      },
+      "id": "f877398a-f84f-4557-b29c-16b3f5e3085c",
+      "name": "Resolver cuenta y documentos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -624,
+        112
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "credentials": {
+        "postgres": {
+          "id": "xZu1goyVLgEk713g",
+          "name": "Postgres supabase admin"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Decide, por cuenta, qué documentos faltan. Emite 1 item por documento a subir\n// y 1 item \"omitir\" cuando no hay nada que hacer (para que el log salga completo).\nconst cfg = $('Configuración').first().json;\nconst ctxItems = $('Extraer proyecto y depa').all();\nconst items = $input.all();\nconst out = [];\n// Una cuenta puede tener varias facturas (pagos parciales) y todas deben cargarse.\n// Lo unico que se evita es subir DOS VECES el mismo archivo a la misma cuenta.\nconst yaPlaneado = new Set();\n\nfor (let i = 0; i < items.length; i++) {\n  const r = items[i].json || {};\n  let ctx;\n  try { ctx = $('Extraer proyecto y depa').itemMatching(i).json; }\n  catch (e) { ctx = (ctxItems[i] || { json: {} }).json; }\n\n  const base = {\n    folio: ctx.folio || null,\n    proyecto: ctx.proyecto || null,\n    num_depa: ctx.num_depa || null,\n    uuid: ctx.uuid || null,\n    total: ctx.total === undefined ? null : ctx.total,\n    subtotal: ctx.subtotal === undefined ? null : ctx.subtotal,\n    moneda: ctx.moneda || null,\n    serie: ctx.serie || null,\n    folio_cfdi: ctx.folio_cfdi || null,\n    fecha_cfdi: ctx.fecha_cfdi || null,\n    modelo: ctx.modelo || null,\n    proyecto_inferido_por_modelo: ctx.proyecto_inferido_por_modelo === true,\n    proyecto_por_defecto_aplicado: ctx.proyecto_por_defecto_aplicado === true,\n    descripcion: ctx.descripcion || null,\n    xml_file_id: ctx.xml_file_id || null,\n    xml_name: ctx.xml_name || null,\n    pdf_file_id: ctx.pdf_file_id || null,\n    pdf_name: ctx.pdf_name || null,\n    id_cuenta_cobranza: r.id_cuenta_cobranza || null,\n    cuenta_activa: r.cuenta_activa !== false,\n    id_propiedad: r.id_propiedad || null,\n    numero_propiedad: r.numero_propiedad || null,\n    id_producto: ctx.id_producto === undefined ? null : ctx.id_producto,\n    tiene_xml: r.tiene_xml === true,\n    tiene_pdf: r.tiene_pdf === true,\n    n_coincidencias: (r.cuenta_activa ? r.n_activas : r.n_total) || 0\n  };\n\n  if (!ctx.num_depa || !ctx.proyecto) {\n    out.push({ json: { ...base, accion: 'omitir', motivo: 'no_se_pudo_parsear_descripcion' } });\n    continue;\n  }\n  if (ctx.id_producto === null || ctx.id_producto === undefined) {\n    out.push({ json: { ...base, accion: 'omitir', motivo: 'proyecto_sin_id_producto_mapeado' } });\n    continue;\n  }\n  if (!base.id_cuenta_cobranza) {\n    out.push({ json: { ...base, accion: 'omitir', motivo: 'sin_cuenta_de_cobranza' } });\n    continue;\n  }\n  if (base.n_coincidencias > 1) {\n    // Seguridad: no adivinar. Si hay varias cuentas para el mismo depa (activas, o\n    // canceladas cuando no hay ninguna activa), se reporta y no se carga.\n    out.push({ json: { ...base, accion: 'omitir', motivo: 'cuenta_ambigua_' + base.n_coincidencias + '_coincidencias' } });\n    continue;\n  }\n\n  const faltantes = [];\n  const duplicados = [];\n  if (!base.tiene_xml && base.xml_file_id) {\n    faltantes.push({ tipo: 'xml', id_tipo_documento: cfg.id_tipo_documento_xml, file_id: base.xml_file_id, file_name: base.xml_name });\n  }\n  if (!base.tiene_pdf && base.pdf_file_id) {\n    faltantes.push({ tipo: 'pdf', id_tipo_documento: cfg.id_tipo_documento_pdf, file_id: base.pdf_file_id, file_name: base.pdf_name });\n  }\n\n  if (faltantes.length === 0) {\n    const motivo = base.tiene_xml && base.tiene_pdf\n      ? 'factura_ya_cargada'\n      : 'falta_documento_pero_no_hay_archivo_en_drive';\n    out.push({ json: { ...base, accion: 'omitir', motivo } });\n    continue;\n  }\n\n  for (const f of faltantes) {\n    const clave = base.id_cuenta_cobranza + ':' + f.file_id;\n    if (yaPlaneado.has(clave)) { duplicados.push(f); continue; }\n    yaPlaneado.add(clave);\n    out.push({ json: { ...base, accion: 'subir', motivo: null, ...f } });\n  }\n  for (const f of duplicados) {\n    out.push({ json: { ...base, accion: 'omitir', motivo: 'archivo_repetido_en_esta_corrida', ...f } });\n  }\n}\n\nreturn out;"
+      },
+      "id": "097c7d5b-db7f-4e19-a2e3-0c712b29020f",
+      "name": "Planear cargas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f0000000-0000-4000-8000-000000000002",
+              "leftValue": "={{ $json.accion }}",
+              "rightValue": "subir",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0d978a11-fb87-48e1-8c50-67d7061a1bfe",
+      "name": "Hay que subir",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $json.file_id + '/permissions' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"role\": \"reader\", \"type\": \"anyone\"}",
+        "options": {}
+      },
+      "id": "00987dd7-a449-4356-9444-27b1bda54ef0",
+      "name": "Hacer público en Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "WCyZL0GGmQRfvzrB",
+          "name": "Google Drive account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// URL pública del archivo en Drive: visor de Drive para XML y PDF.\n// Se usa /file/d/{id}/view (no uc?export=download) porque para los XML Drive\n// devuelve la pantalla \"no puede analizar este archivo en busca de virus\";\n// el visor, en cambio, abre siempre y ofrece el botón de descarga.\nconst ctx = $('Hay que subir').item.json;\nconst cfg = $('Configuración').first().json;\nconst permiso = $input.item.json || {};\nconst compartido = !!permiso.id && !permiso.error;\n\nconst plantilla = (ctx.tipo === 'xml' ? cfg.url_xml_plantilla : cfg.url_pdf_plantilla)\n  || 'https://drive.google.com/file/d/{id}/preview';\nconst url = String(plantilla).split('{id}').join(ctx.file_id);\n\nreturn { json: { ...ctx, url_publica: url, permiso_publico_ok: compartido } };"
+      },
+      "id": "326c733f-41eb-44e1-87fb-f3bcafaa5323",
+      "name": "Construir URL pública",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.documentos (id_cuenta_cobranza, id_tipo_documento, url,numero,id_estatus_verificacion,id_producto)\nVALUES ($1::int, $2::int, $3::text,$4::text,$5::int,$6::int)\nRETURNING id, id_cuenta_cobranza, id_tipo_documento, url,numero,id_estatus_verificacion,id_producto;",
+        "options": {
+          "queryReplacement": "={{ $json.id_cuenta_cobranza }},{{ $json.id_tipo_documento }},{{ $json.url_publica }},Carga masiva,2,7"
+        }
+      },
+      "id": "48a9eeab-a29d-40bd-be09-22f1acbe1ac4",
+      "name": "Insertar documento",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        400,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "postgres": {
+          "id": "xZu1goyVLgEk713g",
+          "name": "Postgres supabase admin"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "fec99f3f-2372-4f2d-a2b1-10956b38c667",
+      "name": "Sin cambios",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        208,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log de la corrida: una línea CSV por factura con todo el contexto (folio, uuid,\n// proyecto, modelo, depa, propiedad, cuenta, descripción, qué se cargó y por qué no).\n// Los resultados de la carga llegan DENTRO de los items (nodo \"Marcar cargado\"),\n// porque este nodo recibe items de dos ramas y $('Insertar documento') solo tiene\n// datos cuando el item viene de esa rama.\nconst pares = $('Emparejar por folio').all().map((i) => i.json);\nconst plan = $('Planear cargas').all().map((i) => i.json);\nconst entrada = $input.all().map((i) => i.json);\n\nconst cfg = $('Configuración').first().json;\nconst TIPO_XML = cfg.id_tipo_documento_xml || 21;\nconst TIPO_PDF = cfg.id_tipo_documento_pdf || 22;\n\n// Resultado real de cada carga, por cuenta+tipo.\nconst cargado = new Map();\nconst urlPor = new Map();\nconst erroresInsert = [];\n// Respaldo: si el cableado no pasa por \"Marcar cargado\", al log llegan las filas\n// del INSERT (RETURNING) sin contexto de factura. Se registran por cuenta+tipo.\nconst cargadoPorCuentaTipo = new Set();\nfor (const e of entrada) {\n  if (e && e.accion === undefined && e.id_cuenta_cobranza && e.id_tipo_documento) {\n    cargadoPorCuentaTipo.add(e.id_cuenta_cobranza + ':' + e.id_tipo_documento);\n  }\n}\nfor (const e of entrada) {\n  if (!e || e.accion !== 'subir' || !e.id_cuenta_cobranza) continue;\n  const k = e.folio + ':' + e.tipo;\n  cargado.set(k, e.insertado === true);\n  if (e.url_publica) urlPor.set(k, e.url_publica);\n  if (e.insertado !== true) erroresInsert.push((e.folio || '?') + ' ' + e.tipo + ': ' + (e.error_insert || 'sin detalle'));\n}\n\nconst RAZONES = {\n  factura_ya_cargada: 'Esta factura (XML y PDF) ya estaba cargada en la cuenta',\n  archivo_repetido_en_esta_corrida: 'El mismo archivo ya se cargo en esta corrida',\n  sin_cuenta_de_cobranza: 'No se encontro cuenta de cobranza (ni activa ni cancelada) para ese depa',\n  no_se_pudo_parsear_descripcion: 'No se pudo leer el depa en la descripcion del CFDI',\n  proyecto_sin_id_producto_mapeado: 'El proyecto no tiene id_producto en la configuracion',\n  falta_documento_pero_no_hay_archivo_en_drive: 'Falta el documento pero no esta el archivo en Drive',\n  fallo_insert_xml: 'Fallo el insert del XML',\n  fallo_insert_pdf: 'Fallo el insert del PDF'\n};\nconst explicar = (m) => {\n  if (!m) return '';\n  if (RAZONES[m]) return RAZONES[m];\n  if (m.startsWith('cuenta_ambigua_')) return 'Varias cuentas para ese depa (' + m.replace('cuenta_ambigua_', '').replace('_coincidencias', '') + '); no se carga por seguridad';\n  return m;\n};\n\n// Una fila por factura (folio del Drive).\nconst porFolio = new Map();\nfor (const p of plan) {\n  const clave = p.folio || ('cuenta_' + p.id_cuenta_cobranza);\n  if (!porFolio.has(clave)) {\n    porFolio.set(clave, {\n      folio: p.folio || '',\n      uuid: p.uuid || '',\n      total: typeof p.total === 'number' ? p.total : null,\n      subtotal: typeof p.subtotal === 'number' ? p.subtotal : null,\n      moneda: p.moneda || '',\n      serie: p.serie || '',\n      folio_cfdi: p.folio_cfdi || '',\n      fecha_cfdi: p.fecha_cfdi || '',\n      proyecto: p.proyecto || '',\n      modelo: p.modelo || '',\n      num_depa: p.num_depa || '',\n      numero_propiedad: p.numero_propiedad || '',\n      id_propiedad: p.id_propiedad || '',\n      id_cuenta_cobranza: p.id_cuenta_cobranza || '',\n      cuenta_activa: p.cuenta_activa !== false,\n      descripcion: p.descripcion || '',\n      xml_name: p.xml_name || '',\n      pdf_name: p.pdf_name || '',\n      tenia_xml: p.tiene_xml === true,\n      tenia_pdf: p.tiene_pdf === true,\n      inferido: p.proyecto_inferido_por_modelo === true,\n      cargo_xml: false,\n      cargo_pdf: false,\n      motivos: new Set()\n    });\n  }\n  const g = porFolio.get(clave);\n  if (p.motivo) g.motivos.add(p.motivo);\n  if (p.accion === 'subir' && p.id_cuenta_cobranza) {\n    const registrado = cargado.get(p.folio + ':' + p.tipo);\n    const ok = registrado === true ||\n      (registrado === undefined && cargadoPorCuentaTipo.has(p.id_cuenta_cobranza + ':' + p.id_tipo_documento));\n    if (p.tipo === 'xml') g.cargo_xml = g.cargo_xml || ok;\n    if (p.tipo === 'pdf') g.cargo_pdf = g.cargo_pdf || ok;\n    if (!ok) g.motivos.add('fallo_insert_' + p.tipo);\n  }\n}\n\nconst filas = [...porFolio.values()].sort((a, b) => String(a.folio).localeCompare(String(b.folio)));\nconst si = (b) => (b ? 'si' : 'no');\nconst csv = (v) => '\"' + String(v === null || v === undefined ? '' : v).split('\"').join('\"\"') + '\"';\nconst urlDe = (f, tipo) => urlPor.get(f.folio + ':' + tipo) || '';\n\nconst totalArchivos = pares.reduce((n, p) => n + (p.xml_file_id ? 1 : 0) + (p.pdf_file_id ? 1 : 0), 0);\nconst conCuenta = filas.filter((f) => f.id_cuenta_cobranza).length;\nconst canceladas = filas.filter((f) => f.id_cuenta_cobranza && !f.cuenta_activa);\nconst insXml = filas.filter((f) => f.cargo_xml).length;\nconst insPdf = filas.filter((f) => f.cargo_pdf).length;\nconst yaCompletas = filas.filter((f) => !f.cargo_xml && !f.cargo_pdf && f.motivos.has('factura_ya_cargada'));\n// Sin carga y sin explicacion inofensiva: son las que hay que revisar a mano.\nconst sinNada = filas.filter((f) => !f.cargo_xml && !f.cargo_pdf && !f.motivos.has('factura_ya_cargada'));\nconst huerfanos = pares.filter((p) => !p.xml_file_id || !p.pdf_file_id);\n\n// Montos facturados, para cuadrar contra la contabilidad.\nconst sumar = (lista) => lista.reduce((n, f) => n + (typeof f.total === 'number' ? f.total : 0), 0);\nconst dinero = (n) => n.toFixed(2);\nconst conCarga = filas.filter((f) => f.cargo_xml || f.cargo_pdf);\nconst sinMonto = filas.filter((f) => typeof f.total !== 'number');\nconst monedas = [...new Set(filas.map((f) => f.moneda).filter(Boolean))];\n\n// Si se planearon cargas y no llego ningun resultado, el cableado esta mal.\nconst planeadas = plan.filter((p) => p.accion === 'subir').length;\nconst vistos = cargado.size + cargadoPorCuentaTipo.size;\nconst L = [];\nL.push('================================================================');\nL.push(' CARGA DE FACTURAS DE CONDENSADORAS -> tabla documentos');\nL.push(' Ejecutado: ' + $now.toISO());\nL.push('================================================================');\nL.push(' Archivos en Drive .......... ' + totalArchivos);\nL.push(' Facturas (folios) .......... ' + pares.length);\nL.push(' Con cuenta de cobranza ..... ' + conCuenta + ' de ' + filas.length);\nL.push(' Sobre cuenta cancelada ..... ' + canceladas.length);\nL.push(' Documentos insertados ...... ' + (insXml + insPdf) + '  (xml: ' + insXml + ' | pdf: ' + insPdf + ')');\nL.push(' Ya tenian ambos docs ....... ' + yaCompletas.length);\nL.push(' Facturas a revisar ......... ' + sinNada.length);\nif (planeadas > 0 && vistos === 0) {\n  L.push('');\n  L.push(' AVISO: se planearon ' + planeadas + ' cargas y no llego ningun resultado al log.');\n  L.push('        Revisa que Insertar documento -> Marcar cargado -> Armar log este conectado.');\n}\nL.push('');\nL.push(' Monto facturado (total) .... ' + dinero(sumar(filas)) + (monedas.length ? '  [' + monedas.join(', ') + ']' : ''));\nL.push(' Monto con carga en esta run . ' + dinero(sumar(conCarga)));\nL.push(' Monto ya cargado antes ...... ' + dinero(sumar(yaCompletas)));\nL.push(' Monto a revisar ............. ' + dinero(sumar(sinNada)));\nif (sinMonto.length) L.push(' Facturas sin monto leido .... ' + sinMonto.length);\nL.push('');\nL.push('== RESUMEN (cuenta_cobranza,pdf,xml) ==');\nL.push('cuenta_cobranza,pdf,xml');\nfor (const f of filas) {\n  L.push((f.id_cuenta_cobranza || 'SIN_CUENTA') + ',' + si(f.cargo_pdf) + ',' + si(f.cargo_xml));\n}\nL.push('');\nL.push('== DETALLE (CSV) ==');\nL.push([\n  'factura', 'uuid', 'proyecto', 'proyecto_inferido_por_modelo', 'modelo', 'num_depa',\n  'numero_propiedad', 'id_propiedad', 'cuenta_cobranza', 'cuenta_activa', 'descripcion',\n  'monto_total', 'subtotal', 'moneda', 'serie', 'folio_cfdi', 'fecha_cfdi',\n  'ya_tenia_pdf', 'ya_tenia_xml', 'cargo_pdf', 'cargo_xml', 'razon_no_carga',\n  'archivo_pdf', 'archivo_xml', 'url_pdf', 'url_xml'\n].join(','));\nfor (const f of filas) {\n  L.push([\n    csv(f.folio), csv(f.uuid), csv(f.proyecto), csv(si(f.inferido)), csv(f.modelo), csv(f.num_depa),\n    csv(f.numero_propiedad), csv(f.id_propiedad), csv(f.id_cuenta_cobranza),\n    csv(f.id_cuenta_cobranza ? si(f.cuenta_activa) : ''), csv(f.descripcion),\n    csv(typeof f.total === 'number' ? f.total.toFixed(2) : ''),\n    csv(typeof f.subtotal === 'number' ? f.subtotal.toFixed(2) : ''),\n    csv(f.moneda), csv(f.serie), csv(f.folio_cfdi), csv(f.fecha_cfdi),\n    csv(si(f.tenia_pdf)), csv(si(f.tenia_xml)), csv(si(f.cargo_pdf)), csv(si(f.cargo_xml)),\n    csv([...f.motivos].map(explicar).join(' | ')),\n    csv(f.pdf_name), csv(f.xml_name), csv(urlDe(f, 'pdf')), csv(urlDe(f, 'xml'))\n  ].join(','));\n}\nif (sinNada.length) {\n  L.push('');\n  L.push('== FACTURAS A REVISAR (no se cargo nada) ==');\n  for (const f of sinNada) {\n    L.push('- ' + (f.folio || '?') +\n      ' | proyecto: ' + (f.proyecto || '?') +\n      ' | depa: ' + (f.num_depa || '?') +\n      ' | cuenta: ' + (f.id_cuenta_cobranza || 'SIN_CUENTA') +\n      ' | razon: ' + ([...f.motivos].map(explicar).join(' | ') || 'sin motivo registrado'));\n    if (f.descripcion) L.push('    descripcion: ' + f.descripcion);\n  }\n}\nif (canceladas.length) {\n  L.push('');\n  L.push('== CARGAS SOBRE CUENTAS CANCELADAS (revisar) ==');\n  for (const f of canceladas) {\n    L.push('- ' + f.folio + ' | depa: ' + f.num_depa + ' | cuenta: ' + f.id_cuenta_cobranza +\n      ' | pdf: ' + si(f.cargo_pdf) + ' | xml: ' + si(f.cargo_xml));\n  }\n}\nif (erroresInsert.length) {\n  L.push('');\n  L.push('== ERRORES DE INSERT ==');\n  for (const e of erroresInsert) L.push('- ' + e);\n}\nif (huerfanos.length) {\n  L.push('');\n  L.push('== FOLIOS SIN PAR COMPLETO EN DRIVE ==');\n  for (const h of huerfanos) {\n    L.push('- ' + h.folio + ' | xml: ' + (h.xml_name || 'FALTA') + ' | pdf: ' + (h.pdf_name || 'FALTA'));\n  }\n}\n\nreturn [{\n  json: {\n    log_txt: L.join('\\n'),\n    facturas: filas.length,\n    con_cuenta: conCuenta,\n    sobre_cuenta_cancelada: canceladas.length,\n    insertados: insXml + insPdf,\n    insertados_xml: insXml,\n    insertados_pdf: insPdf,\n    a_revisar: sinNada.length,\n    ya_completas: yaCompletas.length,\n    monto_total: sumar(filas),\n    monto_cargado_en_esta_corrida: sumar(conCarga),\n    monto_a_revisar: sumar(sinNada)\n  }\n}];"
+      },
+      "id": "70bfad36-3a20-4a91-b719-447208ec3808",
+      "name": "Armar log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "log_txt",
+        "options": {
+          "fileName": "log_carga_facturas_condensadoras.txt"
+        }
+      },
+      "id": "584575ca-911c-408b-a288-ea94689cff59",
+      "name": "Log a archivo txt",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        832,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "name": "={{ 'log_carga_facturas_condensadoras_' + $now.toFormat('yyyyLLdd_HHmmss') + '.txt' }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Configuración').first().json.folder_id }}"
+        },
+        "options": {}
+      },
+      "id": "1d68869c-0d98-4a90-8fdb-d76b461a38c3",
+      "name": "Subir log a Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1024,
+        112
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "WCyZL0GGmQRfvzrB",
+          "name": "Google Drive account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Reconstruye el contexto del documento después del INSERT y marca el resultado.\n// El nodo Postgres reemplaza el json por la respuesta ({id...} o {success:true}),\n// asi que el contexto se recupera del nodo anterior (mismo branch) y viaja hacia\n// el log dentro del item: \"Armar log\" recibe items de dos ramas y no puede leer\n// con $() los nodos que solo existen en una de ellas.\nconst ctx = $('Construir URL pública').item.json;\nconst r = $input.item.json || {};\nconst fallo = !!r.error;\n\nreturn {\n  json: {\n    ...ctx,\n    insertado: !fallo,\n    id_documento: r.id || null,\n    error_insert: fallo ? String((r.error && r.error.message) || r.error) : null\n  }\n};"
+      },
+      "id": "a1000000-0000-4000-8000-000000000022",
+      "name": "Marcar cargado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Inicio": {
+      "main": [
+        [
+          {
+            "node": "Configuración",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuración": {
+      "main": [
+        [
+          {
+            "node": "Listar archivos del Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Listar archivos del Drive": {
+      "main": [
+        [
+          {
+            "node": "Emparejar por folio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emparejar por folio": {
+      "main": [
+        [
+          {
+            "node": "Solo folios con XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solo folios con XML": {
+      "main": [
+        [
+          {
+            "node": "Descargar XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar XML": {
+      "main": [
+        [
+          {
+            "node": "XML a JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "XML a JSON": {
+      "main": [
+        [
+          {
+            "node": "Extraer proyecto y depa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer proyecto y depa": {
+      "main": [
+        [
+          {
+            "node": "Resolver cuenta y documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolver cuenta y documentos": {
+      "main": [
+        [
+          {
+            "node": "Planear cargas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Planear cargas": {
+      "main": [
+        [
+          {
+            "node": "Hay que subir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay que subir": {
+      "main": [
+        [
+          {
+            "node": "Hacer público en Drive",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sin cambios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hacer público en Drive": {
+      "main": [
+        [
+          {
+            "node": "Construir URL pública",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir URL pública": {
+      "main": [
+        [
+          {
+            "node": "Insertar documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar documento": {
+      "main": [
+        [
+          {
+            "node": "Marcar cargado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sin cambios": {
+      "main": [
+        [
+          {
+            "node": "Armar log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar log": {
+      "main": [
+        [
+          {
+            "node": "Log a archivo txt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log a archivo txt": {
+      "main": [
+        [
+          {
+            "node": "Subir log a Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar cargado": {
+      "main": [
+        [
+          {
+            "node": "Armar log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "e8c041d0-b439-4b70-a6f9-e3622c035627",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ac9469524657dd0d86c98cc6c3f6d79b9ab95b76b3147445ac2a61508925fe0e"
+  },
+  "id": "5fCsK3WmmGoWyfMK",
+  "tags": []
+}
